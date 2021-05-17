@@ -1,30 +1,43 @@
 ---
 title: "bayes-2-project"
-author: "Jennifer Chen"
+author: "Jennifer Chen, Qier Meng"
 date: "5/17/2021"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+## Data
+
+```{r}
+load('./nmes.rdata')
+
+# define mscd
+nmes$mscd <- ifelse(nmes$lc5==1 | nmes$chd5==1, 1, 0)
+
+# remove incomplete cases
+nmes <- nmes[nmes$eversmk!='.',]
+
+# mscd vs. eversmk
+nmes$eversmk <- as.integer(nmes$eversmk)
+t <- table(nmes$mscd, nmes$eversmk)
+colnames(t) <- c("Never smoked", "Smoked")
+rownames(t) <- c("No MSCD", "MSCD")
+t
 ```
 
-## R Markdown
+## Model
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+$$
+\begin{align*}
+[\text{MSCD}_i | \text{eversmk}_i, \alpha, \beta, \gamma] &\sim \text{Bernoulli}(\theta_i)\\
+\text{logit}(\theta_i) &= \alpha + \beta \gamma \text{eversmk}_i\\
+\alpha &\sim \text{Normal}(0, 10)\\
+\beta &\sim \text{Normal}(0, 2) \\
+\gamma &\sim \text{Bernoulli}(0.5).
+\end{align*}
+$$
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## Implementation
 
-```{r cars}
-summary(cars)
-```
+## Prediction
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Frequentist approach
