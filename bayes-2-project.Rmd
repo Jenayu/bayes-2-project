@@ -5,19 +5,31 @@ date: "5/17/2021"
 output: html_document
 ---
 
+```{r}
+library(rjags)
+library(coda)
+library(lmtest)
+library(pROC)
+```
+
 ## Data
 
 ```{r}
 load('./nmes.rdata')
 
-# define mscd
-nmes$mscd <- ifelse(nmes$lc5==1 | nmes$chd5==1, 1, 0)
-
 # remove incomplete cases
 nmes <- nmes[nmes$eversmk!='.',]
+nmes <- nmes[nmes$male!='.',]
+nmes <- nmes[nmes$lastage!='.',]
+
+# define mscd
+nmes$mscd <- ifelse(nmes$lc5==1 | nmes$chd5==1, 1, 0)
+nmes$eversmk <- as.integer(nmes$eversmk)
+nmes$age <- nmes$lastage
+
+head(nmes[c("mscd","eversmk", "male", "age")])
 
 # mscd vs. eversmk
-nmes$eversmk <- as.integer(nmes$eversmk)
 t <- table(nmes$mscd, nmes$eversmk)
 colnames(t) <- c("Never smoked", "Smoked")
 rownames(t) <- c("No MSCD", "MSCD")
@@ -28,16 +40,75 @@ t
 
 $$
 \begin{align*}
-[\text{MSCD}_i | \text{eversmk}_i, \alpha, \beta, \gamma] &\sim \text{Bernoulli}(\theta_i)\\
-\text{logit}(\theta_i) &= \alpha + \beta \gamma \text{eversmk}_i\\
+[\text{MSCD}_i | \text{eversmk}_i, \text{age}_i, \text{male}_i, \alpha, \beta, \gamma] &\sim \text{Bernoulli}(\theta_i)\\
+\text{logit}(\theta_i) &= \alpha + \beta_1 \gamma_1 \text{eversmk}_i + \beta_2 \gamma_2 \text{age}_i + \beta_3 \gamma_3 \text{male}_i\\
 \alpha &\sim \text{Normal}(0, 10)\\
-\beta &\sim \text{Normal}(0, 2) \\
-\gamma &\sim \text{Bernoulli}(0.5).
+\beta_j &\sim \text{Normal}(0, 2) ~~ j=1,2,3\\
+\gamma_j &\sim \text{Bernoulli}(0.5).
 \end{align*}
 $$
 
 ## Implementation
 
+```{r}
+# train vs. test set
+set.seed(0)
+idx <- sample(nrow(nmes), 11684, replace=FALSE)
+train.dat <- nmes[idx[1:10000],]
+test.dat <- nmes[idx[10001:11684],]
+```
+
+```{r}
+# bayesian model
+
+# center
+dat <- list(y = train.dat$mscd, 
+            x1 = train.dat$eversmk,
+            x2 = train.dat$male,
+            x3 = (train.dat$age - mean(train.dat$age)) / sd(train.dat$age),
+            n = 10000)
+
+modelstring="model {
+  alpha ~ dnorm(0, 1/100)
+  for (j in 1:3){
+    beta[j] ~ dnorm(0, 1/4)
+    gamma[j] ~ dbern(0.5)
+  }
+  for (i in 1:n) {
+    logit( theta[i] ) <- alpha + beta[1]*gamma[1]*x1[i] + beta[2]*gamma[2]*x2[i] + beta[3]*gamma[3]*x3[i]
+    y[i] ~ dbern(theta[i])
+  }
+}"
+
+model <- jags.model(textConnection(modelstring), data=dat)
+```
+
+```{r}
+update(model, n.iter=1000)
+output <- coda.samples(model=model,
+                       variable.names=c("alpha", "beta", "gamma"),
+                       n.iter=10000,
+                       thin=1)
+```
+
+```{r}
+coda::effectiveSize(output)
+```
+
+
+```{r}
+summary(output)
+plot(output)
+```
+
 ## Prediction
 
 ## Frequentist approach
+
+```{r}
+lr <- glm(eversmk~mscd + male + age, data=nmes, family=binomial(link="logit"))
+summary.glm(lr)$coefficients
+```
+
+## Discussion
+
