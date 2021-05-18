@@ -47,8 +47,8 @@ t
 
 $$
 \begin{align*}
-[\text{MSCD}_i | \text{eversmk}_i, \text{age}_i, \text{male}_i, \alpha, \beta, \gamma] &\sim \text{Bernoulli}(\theta_i)\\
-\text{logit}(\theta_i) &= \alpha + \beta_1 \gamma_1 \text{eversmk}_i + \beta_2 \gamma_2 \text{age}_i + \beta_3 \gamma_3 \text{male}_i\\
+[\text{MSCD}_i | \text{eversmk}_i, \text{male}_i, \text{age}_i, \alpha, \beta, \gamma] &\sim \text{Bernoulli}(\theta_i)\\
+\text{logit}(\theta_i) &= \alpha + \beta_1 \gamma_1 \text{eversmk}_i + \beta_2 \gamma_2 \text{male}_i + \beta_3 \gamma_3 \text{age}_i\\
 \alpha &\sim \text{Normal}(0, 10)\\
 \beta_j &\sim \text{Normal}(0, 2) ~~ j=1,2,3\\
 \gamma_j &\sim \text{Bernoulli}(0.5).
@@ -58,7 +58,7 @@ $$
 ## Implementation
 
 ```{r}
-# train vs. test set
+# split data into training set and test set
 set.seed(0)
 idx <- sample(nrow(nmes), 11684, replace=FALSE)
 train.dat <- nmes[idx[1:10000],]
@@ -68,7 +68,6 @@ test.dat <- nmes[idx[10001:11684],]
 ```{r}
 # bayesian model
 
-# center
 dat <- list(y = train.dat$mscd, 
             x1 = train.dat$eversmk,
             x2 = train.dat$male,
@@ -94,25 +93,34 @@ model <- jags.model(textConnection(modelstring), data=dat)
 update(model, n.iter=1000)
 output <- coda.samples(model=model,
                        variable.names=c("alpha", "beta", "gamma"),
-                       n.iter=1000,
+                       n.iter=2000,
                        thin=1)
 ```
 
 ```{r}
-coda::effectiveSize(output)
-```
+n.chains <- 1
+n.iter <- 2000
+betas <- output %>%
+    map_dfr(as_tibble) %>%
+    mutate(chain=rep(paste("Chain", seq_len(n.chains)),
+                     each=n.iter),
+           iter=rep(seq_len(n.iter), n.chains))
 
-```{r}
 gamma.post <- as.data.frame(as.matrix(betas[,5:7]))
 gamma.string <- as.data.frame(apply(gamma.post, MARGIN=1, FUN=toString))
 table(gamma.string)
 ```
+$$
+\gamma_j \sim \text{Bernuolli}(0.5), j=1,2,3 \\
+P(\gamma_1=1| \pmb{x}, \pmb{y}) = 1 \\
+P(\gamma_2=1| \pmb{x}, \pmb{y}) = 0.4465 \\ # may change this according to model output
+P(\gamma_3=1| \pmb{x}, \pmb{y}) = 1 \\
+$$
 
 ## Prediction
 
 ```{r}
-Xtest <- model.matrix(mscd ~ eversmk + age + male,
-                      data=test.dat)
+Xtest <- model.matrix(mscd ~ eversmk + age + male, data=test.dat)
 B <- as.matrix(betas[, 1:4])
 pred <- Xtest %*% t(B)
 m <- tibble(model_average=rowMeans(pred),
@@ -127,7 +135,7 @@ p$auc
 ## Frequentist approach
 
 ```{r}
-lr <- glm(eversmk~mscd + male + age, data=train.dat, family=binomial(link="logit"))
+lr <- glm(mscd ~ eversmk + male + age, data=train.dat, family=binomial(link="logit"))
 summary.glm(lr)$coefficients
 
 test.dat$pred <- predict(lr, newdata=test.dat, type = "response")
@@ -146,5 +154,83 @@ title(ylab = "sensitivity", line = 1.9)
 ROC$auc
 ```
 
-## Discussion
+$$
+\begin{align*}
+[\text{MSCD}_i | \text{eversmk}_i, \text{male}_i, \text{age}_i, \alpha, \beta, \gamma] &\sim \text{Bernoulli}(\theta_i)\\
+\text{logit}(\theta_i) &= \alpha + \beta_1 \gamma_1 \text{eversmk}_i + \beta_2 \gamma_2 \text{male}_i + \beta_3 \gamma_3 \text{age}_i\\
+\alpha &\sim \text{Normal}(-6.84, 0.21)\\
+\beta_1 &\sim \text{Normal}(0.71, 0.074) \\
+\beta_2 &\sim \text{Normal}(0.07, 0.003) \\
+\beta_3 &\sim \text{Normal}(0.17, 0.069) \\
+\gamma_j &\sim \text{Bernoulli}(0.5).
+\end{align*}
+$$
 
+```{r}
+# bayesian model
+
+# center
+dat <- list(y = train.dat$mscd, 
+            x1 = train.dat$eversmk,
+            x2 = train.dat$male,
+            x3 = (train.dat$age - mean(train.dat$age)) / sd(train.dat$age),
+            n = 10000)
+
+modelstring2="model {
+  alpha ~ dnorm(-6.84, 1/0.0441)
+  beta[1] ~ dnorm(0.71, 1/0.005476)
+  beta[2] ~ dnorm(0.07, 1/0.000009)
+  beta[3] ~ dnorm(0.17, 1/0.004761)
+  for (j in 1:3){
+    gamma[j] ~ dbern(0.5)
+  }
+  for (i in 1:n) {
+    logit( theta[i] ) <- alpha + beta[1]*gamma[1]*x1[i] + beta[2]*gamma[2]*x2[i] + beta[3]*gamma[3]*x3[i]
+    y[i] ~ dbern(theta[i])
+  }
+}"
+
+model2 <- jags.model(textConnection(modelstring2), data=dat)
+```
+
+```{r}
+update(model2, n.iter=1000)
+output2 <- coda.samples(model=model2,
+                       variable.names=c("alpha", "beta", "gamma"),
+                       n.iter=2000,
+                       thin=1)
+```
+
+```{r}
+betas2 <- output %>%
+    map_dfr(as_tibble) %>%
+    mutate(chain=rep(paste("Chain", seq_len(n.chains)),
+                     each=n.iter),
+           iter=rep(seq_len(n.iter), n.chains))
+
+gamma.post2 <- as.data.frame(as.matrix(betas2[,5:7]))
+gamma.string2 <- as.data.frame(apply(gamma.post2, MARGIN=1, FUN=toString))
+table(gamma.string2)
+```
+
+$$
+\gamma_j \sim \text{Bernuolli}(0.5), j=1,2,3 \\
+P(\gamma_1=1| \pmb{x}, \pmb{y}) = 1 \\
+P(\gamma_2=1| \pmb{x}, \pmb{y}) = 0.4465 \\ # may change this according to model output
+P(\gamma_3=1| \pmb{x}, \pmb{y}) = 1 \\
+$$
+
+```{r}
+Xtest <- model.matrix(mscd ~ eversmk + male + age,
+                      data=test.dat)
+B <- as.matrix(betas2[, 1:4])
+pred <- Xtest %*% t(B)
+m <- tibble(model_average=rowMeans(pred),
+            mscd=test.dat$mscd)
+p <- pROC::roc(m$mscd, m$model_average, ci=TRUE)
+```
+
+```{r}
+plot(p)
+p$auc
+```
