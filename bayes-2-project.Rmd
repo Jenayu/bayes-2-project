@@ -10,6 +10,8 @@ library(rjags)
 library(coda)
 library(lmtest)
 library(pROC)
+library(dplyr)
+library(tidyverse)
 ```
 
 ## Data
@@ -32,6 +34,11 @@ head(nmes[c("mscd","eversmk", "male", "age")])
 # mscd vs. eversmk
 t <- table(nmes$mscd, nmes$eversmk)
 colnames(t) <- c("Never smoked", "Smoked")
+rownames(t) <- c("No MSCD", "MSCD")
+t
+
+t <- table(nmes$mscd, nmes$male)
+colnames(t) <- c("Female", "Male")
 rownames(t) <- c("No MSCD", "MSCD")
 t
 ```
@@ -87,7 +94,7 @@ model <- jags.model(textConnection(modelstring), data=dat)
 update(model, n.iter=1000)
 output <- coda.samples(model=model,
                        variable.names=c("alpha", "beta", "gamma"),
-                       n.iter=10000,
+                       n.iter=1000,
                        thin=1)
 ```
 
@@ -95,19 +102,48 @@ output <- coda.samples(model=model,
 coda::effectiveSize(output)
 ```
 
-
 ```{r}
-summary(output)
-plot(output)
+gamma.post <- as.data.frame(as.matrix(betas[,5:7]))
+gamma.string <- as.data.frame(apply(gamma.post, MARGIN=1, FUN=toString))
+table(gamma.string)
 ```
 
 ## Prediction
 
+```{r}
+Xtest <- model.matrix(mscd ~ eversmk + age + male,
+                      data=test.dat)
+B <- as.matrix(betas[, 1:4])
+pred <- Xtest %*% t(B)
+m <- tibble(model_average=rowMeans(pred),
+            mscd=test.dat$mscd)
+p <- pROC::roc(m$mscd, m$model_average, ci=TRUE)
+```
+```{r}
+plot(p)
+p$auc
+```
+
 ## Frequentist approach
 
 ```{r}
-lr <- glm(eversmk~mscd + male + age, data=nmes, family=binomial(link="logit"))
+lr <- glm(eversmk~mscd + male + age, data=train.dat, family=binomial(link="logit"))
 summary.glm(lr)$coefficients
+
+test.dat$pred <- predict(lr, newdata=test.dat, type = "response")
+```
+
+```{r}
+ROC <- roc(test.dat$mscd, test.dat$pred)
+
+plot(1 - ROC$specificities, ROC$sensitivities,
+xlim = c(0, 1), ylim = c(0, 1), xlab = "", ylab = "",
+pch = 16, col = "black", cex = 0.8, type = "l")
+abline(c(0, 1), col = "grey", lty = 2)
+title(xlab = "1-specificity", line = 1.9)
+title(ylab = "sensitivity", line = 1.9)
+
+ROC$auc
 ```
 
 ## Discussion
